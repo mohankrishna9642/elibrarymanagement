@@ -1,0 +1,32 @@
+//// src/main/java/com/elibrary/borrowingservice/feign/AuthClient.java
+//package com.elibrary.borrowingservice.config;
+//
+//import org.springframework.cloud.openfeign.FeignClient;
+//import org.springframework.web.bind.annotation.GetMapping;
+//import org.springframework.web.bind.annotation.PathVariable;
+//
+// // This line is critical
+//
+//import lombok.AllArgsConstructor;
+//import lombok.Data;
+//import lombok.NoArgsConstructor;
+//
+//// Assuming your Auth Service's application name is "AUTH-SERVICE"
+//// and it exposes a profile endpoint by ID.
+//@FeignClient(name = "auth-service", url = "http://auth-service", configuration = FeignClient.class)
+//public interface AuthClient1 {
+//
+//    // DTO for user profile from Auth Service (only need ID and email)
+//    @Data // Lombok annotation for getters/setters/toString
+//    @AllArgsConstructor
+//    @NoArgsConstructor
+//    class UserProfileDto {
+//        private Long id;
+//        private String email;
+//        private String name; // Include name if you want to display it
+//        // Add other fields if needed, like roles, phone, city
+//    }
+//
+//    @GetMapping("/api/users/profile-by-id/{userId}")
+//    UserProfileDto getUserProfileById(@PathVariable("userId") Long userId);
+//}
