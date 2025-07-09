@@ -1,0 +1,22 @@
+server.port=8082 
+spring.application.name=book-service
+
+spring.datasource.url=jdbc:mysql://localhost:3306/e_library?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+spring.datasource.username=root
+spring.datasource.password=Mohan@12345
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+spring.jpa.hibernate.ddl-auto=update # Use 'update' for dev, 'validate' or 'none' for production
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQL8Dialect
+
+# File Upload Location: Create this folder in your project root or choose another location.
+book.upload.directory=./uploads/books
+
+# Swagger UI Configuration (served by this service)
+springdoc.swagger-ui.path=/api/book/swagger-ui.html # Path for Swagger UI
+springdoc.api-docs.path=/api/book/v3/api-docs      # Path for OpenAPI JSON/YAML
+
+logging.level.org.springframework.web=DEBUG
+logging.level.com.elibrary.bookservice=DEBUG
+logging.level.org.springframework.security=DEBUG # Enable for security debugging

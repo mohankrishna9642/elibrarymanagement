@@ -1,0 +1,87 @@
+package com.elibrary.bookservice.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.filter.OncePerRequestFilter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.util.StringUtils;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true)
+public class SecurityConfig {
+
+    @Bean
+    public OncePerRequestFilter gatewayHeaderAuthFilter() {
+        return new OncePerRequestFilter() {
+            @Override
+            protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+                    throws ServletException, IOException {
+                String userId = request.getHeader("X-User-ID");
+                String userEmail = request.getHeader("X-User-Email");
+                String userRoles = request.getHeader("X-User-Roles");
+
+                if (StringUtils.hasText(userId) && StringUtils.hasText(userEmail) && StringUtils.hasText(userRoles)) {
+                    List<SimpleGrantedAuthority> authorities = Arrays.stream(userRoles.split(","))
+                            .map(SimpleGrantedAuthority::new)
+                            .collect(Collectors.toList());
+
+                    User principal = new User(userEmail, "", authorities);
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(principal, null, authorities);
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+
+                filterChain.doFilter(request, response);
+            }
+        };
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(authorize -> authorize
+                // PUBLIC ACCESS:
+                // Allows direct access to Book Service Swagger UI (on Book Service's port, e.g. 8082)
+                // and also when accessed via Gateway (e.g. 8080)
+                .requestMatchers(
+                    "/api/book/swagger-ui.html",    // Main Swagger UI page (now singular /api/book)
+                    "/api/book/swagger-ui/**",      // CSS, JS, fonts etc.
+                    "/api/book/v3/api-docs/**"      // OpenAPI spec JSON/YAML
+                ).permitAll()
+                // Allows direct access to Actuator endpoints
+                .requestMatchers("/actuator/**").permitAll()
+                // Allows any user (even unauthenticated) to VIEW / BROWSE all books
+                .requestMatchers("/api/book/browse").permitAll() // Now singular /api/book/browse
+                // Allows any user (even unauthenticated) to directly READ book content files
+                .requestMatchers("/books/**").permitAll()
+
+                // PROTECTED ACCESS (requires valid JWT token provided by Gateway):
+                .anyRequest().authenticated()
+            );
+
+        http.addFilterBefore(gatewayHeaderAuthFilter(), UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+}

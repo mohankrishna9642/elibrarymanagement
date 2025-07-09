@@ -1,0 +1,57 @@
+package com.elibrary.authservice.controller;
+
+import com.elibrary.authservice.dto.LoginRequest;
+import com.elibrary.authservice.dto.RegistrationRequest;
+import com.elibrary.authservice.dto.ChangePasswordRequest;
+import com.elibrary.authservice.dto.JwtResponse;
+import com.elibrary.authservice.entity.User;
+import com.elibrary.authservice.service.AuthService;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Keep PreAuthorize
+
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+
+    private final AuthService authService;
+
+    public AuthController(AuthService authService) {
+        this.authService = authService;
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<?> registerUser(@Valid @RequestBody RegistrationRequest request) {
+        try {
+            User registeredUser = authService.registerUser(request);
+            return new ResponseEntity<>("User registered successfully! Email: " + registeredUser.getEmail(), HttpStatus.CREATED);
+        } catch (IllegalArgumentException | com.elibrary.authservice.exception.DuplicateEmailException ex) {
+            return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<JwtResponse> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        JwtResponse jwtResponse = authService.authenticateUserAndGenerateJwt(loginRequest);
+        return ResponseEntity.ok(jwtResponse);
+    }
+
+    @PostMapping("/change-password")
+    @PreAuthorize("isAuthenticated()") // User must be authenticated to change password
+    public ResponseEntity<?> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        // Get authenticated user's email from SecurityContext
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        String userEmail = authentication.getName(); // This will be the email
+
+        try {
+            authService.changePassword(userEmail, request);
+            return new ResponseEntity<>("Password changed successfully!", HttpStatus.OK);
+        } catch (IllegalArgumentException | com.elibrary.authservice.exception.ResourceNotFoundException ex) {
+            return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
+        }
+    }
+}

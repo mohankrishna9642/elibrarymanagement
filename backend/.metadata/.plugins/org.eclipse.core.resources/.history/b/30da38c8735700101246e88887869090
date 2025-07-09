@@ -1,0 +1,121 @@
+package com.elibrary.authservice.config;
+
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
+
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import com.elibrary.authservice.entity.Role;
+import com.elibrary.authservice.entity.User;
+import com.elibrary.authservice.repository.RoleRepository;
+import com.elibrary.authservice.repository.UserRepository;
+import com.elibrary.authservice.security.jwt.AuthEntryPointJwt;
+import com.elibrary.authservice.security.jwt.AuthTokenFilter;
+import com.elibrary.authservice.security.services.UserDetailsServiceImpl;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true) // Enable @PreAuthorize
+public class SecurityConfig {
+
+    private final UserDetailsServiceImpl userDetailsService;
+    private final AuthEntryPointJwt unauthorizedHandler;
+    private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+
+    public SecurityConfig(UserDetailsServiceImpl userDetailsService, AuthEntryPointJwt unauthorizedHandler,
+                          UserRepository userRepository, RoleRepository roleRepository) {
+        this.userDetailsService = userDetailsService;
+        this.unauthorizedHandler = unauthorizedHandler;
+        this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
+    }
+
+    @Bean
+    public AuthTokenFilter authenticationJwtTokenFilter() {
+        return new AuthTokenFilter();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        authProvider.setUserDetailsService(userDetailsService);
+        authProvider.setPasswordEncoder(passwordEncoder());
+        return authProvider;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
+        return authConfig.getAuthenticationManager();
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable()) // Disable CSRF for stateless API
+            .exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler))
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // No sessions
+            .authorizeHttpRequests(authorize -> authorize
+                // Public endpoints for authentication and Swagger
+                .requestMatchers("/api/auth/**", "/swagger-ui/**", "/v3/api-docs/**", "/actuator/**").permitAll()
+                // Admin endpoints (will be secured by @PreAuthorize for specific roles)
+                .requestMatchers("/api/users/admin/**").permitAll() // Gateway will handle initial auth and roles
+                // Any other request needs authentication (handled by JWT filter)
+                .anyRequest().authenticated()
+            );
+
+        http.authenticationProvider(authenticationProvider()); // Set our custom auth provider
+        http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+
+        return http.build();
+    }
+
+    // CommandLineRunner to create default roles and an admin user on startup
+    @Bean
+    public CommandLineRunner initData(UserRepository userRepository, RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
+        return args -> {
+            if (roleRepository.findByName(Role.RoleName.ROLE_USER).isEmpty()) {
+                roleRepository.save(new Role(null, Role.RoleName.ROLE_USER));
+            }
+            if (roleRepository.findByName(Role.RoleName.ROLE_ADMIN).isEmpty()) {
+                roleRepository.save(new Role(null, Role.RoleName.ROLE_ADMIN));
+            }
+
+            if (userRepository.findByEmail("admin@elibrary.com").isEmpty()) {
+                Role adminRole = roleRepository.findByName(Role.RoleName.ROLE_ADMIN)
+                        .orElseThrow(() -> new RuntimeException("Admin Role not found."));
+                Set<Role> adminRoles = new HashSet<>();
+                adminRoles.add(adminRole);
+
+                User adminUser = new User();
+                adminUser.setEmail("admin@elibrary.com");
+                adminUser.setPassword(passwordEncoder.encode("adminpass"));
+                adminUser.setName("Admin User");
+                adminUser.setRegistrationDate(LocalDateTime.now());
+                adminUser.setAccountNonLocked(true);
+                adminUser.setRoles(adminRoles);
+                userRepository.save(adminUser);
+                System.out.println("Default Admin user created: admin@elibrary.com / adminpass");
+            }
+        };
+    }
+}

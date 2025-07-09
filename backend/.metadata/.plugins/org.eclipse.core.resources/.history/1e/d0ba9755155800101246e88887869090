@@ -1,0 +1,5 @@
+package com.elibrary.bookservice.config;
+
+public class StorageConfig {
+
+}

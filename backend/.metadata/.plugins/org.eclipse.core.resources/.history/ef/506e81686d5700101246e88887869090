@@ -1,0 +1,5 @@
+package com.elibrary.authservice.exception;
+
+public class Code {
+
+}

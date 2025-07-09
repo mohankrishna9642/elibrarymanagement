@@ -1,0 +1,59 @@
+package com.elibrary.borrowingservice.feign;
+
+import feign.RequestInterceptor;
+import feign.RequestTemplate;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import jakarta.servlet.http.HttpServletRequest;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@Configuration
+public class FeignClientInterceptor implements RequestInterceptor {
+
+    private static final Logger logger = LoggerFactory.getLogger(FeignClientInterceptor.class);
+
+    private static final String X_USER_ID = "X-User-ID";
+    private static final String X_USER_EMAIL = "X-User-Email";
+    private static final String X_USER_ROLES = "X-User-Roles";
+    private static final String AUTHORIZATION = "Authorization";
+
+    @Override
+    public void apply(RequestTemplate template) {
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+
+        if (attributes != null) {
+            HttpServletRequest request = attributes.getRequest();
+            logger.debug("FeignClientInterceptor: Applying headers for Feign call to URI: {}", template.url());
+
+            String authorizationHeader = request.getHeader(AUTHORIZATION);
+            if (authorizationHeader != null) {
+                template.header(AUTHORIZATION, authorizationHeader);
+                logger.debug("  - Forwarded Authorization header.");
+            } else {
+                logger.warn("  - No Authorization header found in incoming request to Borrowing Service.");
+            }
+
+            String userIdHeader = request.getHeader(X_USER_ID);
+            if (userIdHeader != null) {
+                template.header(X_USER_ID, userIdHeader);
+                logger.debug("  - Forwarded X-User-ID: {}", userIdHeader);
+            }
+            String userEmailHeader = request.getHeader(X_USER_EMAIL);
+            if (userEmailHeader != null) {
+                template.header(X_USER_EMAIL, userEmailHeader);
+                logger.debug("  - Forwarded X-User-Email: {}", userEmailHeader);
+            }
+            String userRolesHeader = request.getHeader(X_USER_ROLES);
+            if (userRolesHeader != null) {
+                template.header(X_USER_ROLES, userRolesHeader);
+                logger.debug("  - Forwarded X-User-Roles: {}", userRolesHeader);
+            }
+        } else {
+            logger.warn("FeignClientInterceptor: No RequestAttributes found for incoming request, skipping header propagation.");
+        }
+    }
+}

@@ -1,0 +1,5 @@
+package com.elibrary.gateway.config;
+
+public class Securityconfig {
+
+}

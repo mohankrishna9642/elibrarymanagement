@@ -1,0 +1,5 @@
+package com.elibrary.authservice.repository;
+
+public interface RoleRepository {
+
+}

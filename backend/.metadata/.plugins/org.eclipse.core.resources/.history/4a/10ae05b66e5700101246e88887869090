@@ -1,0 +1,12 @@
+server.port=8761 
+
+eureka.client.register-with-eureka=false 
+eureka.client.fetch-registry=false       
+eureka.instance.hostname=localhost
+eureka.client.service-url.defaultZone=http://${eureka.instance.hostname}:${server.port}/eureka/
+
+# Enable Actuator endpoints for monitoring
+management.endpoints.web.exposure.include=*
+
+logging.level.com.elibrary.eurekaserver=DEBUG
+spring.application.name=eurekaserver

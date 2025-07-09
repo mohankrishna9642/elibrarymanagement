@@ -1,0 +1,145 @@
+package com.elibrary.authservice.config;
+
+import com.elibrary.authservice.entity.Role;
+import com.elibrary.authservice.entity.User;
+import com.elibrary.authservice.repository.UserRepository;
+import com.elibrary.authservice.repository.RoleRepository;
+import com.elibrary.authservice.security.jwt.AuthEntryPointJwt;
+import com.elibrary.authservice.security.jwt.AuthTokenFilter;
+import com.elibrary.authservice.security.services.UserDetailsServiceImpl;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
+import java.util.Arrays;
+import org.springframework.security.config.Customizer;
+
+
+import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity // Removed prepostEnabled = true for Spring Security 6+
+public class SecurityConfig {
+
+    private final UserDetailsServiceImpl userDetailsService;
+    private final AuthEntryPointJwt unauthorizedHandler;
+    private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+
+    public SecurityConfig(UserDetailsServiceImpl userDetailsService, AuthEntryPointJwt unauthorizedHandler,
+                          UserRepository userRepository, RoleRepository roleRepository) {
+        this.userDetailsService = userDetailsService;
+        this.unauthorizedHandler = unauthorizedHandler;
+        this.userRepository = userRepository;
+        this.roleRepository = roleRepository;
+    }
+
+    @Bean
+    public AuthTokenFilter authenticationJwtTokenFilter() {
+        return new AuthTokenFilter();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        authProvider.setUserDetailsService(userDetailsService); // This service returns UserDetailsImpl, which has isAccountNonLocked()
+        authProvider.setPasswordEncoder(passwordEncoder());
+        return authProvider;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
+        return authConfig.getAuthenticationManager();
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .cors(Customizer.withDefaults())
+            .csrf(csrf -> csrf.disable())
+            .exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler))
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth.requestMatchers("/api/auth/**",
+                                "/api/auth/swagger-ui.html", "/api/auth/swagger-ui/**", "/api/auth/v3/api-docs/**",
+                                "/actuator/**")
+                        .permitAll()
+                        // CRITICAL: Ensure /api/users/profile-by-id/{id} is accessible only by authenticated internal services.
+                        // The Gateway will forward a valid JWT (with its service account/admin role) for this call.
+                        .requestMatchers("/api/users/profile-by-id/{id}").authenticated() // Allow authenticated internal service calls
+                        .anyRequest().authenticated()
+                );
+
+        http.authenticationProvider(authenticationProvider());
+        http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    @Bean
+    public CorsFilter corsFilter() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowCredentials(true);
+        config.setAllowedOriginPatterns(Arrays.asList(
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "http://192.168.68.106:8081" // Update this IP if it's not the correct one for Auth Service
+        ));
+        config.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Accept", "X-User-ID", "X-User-Email", "X-User-Roles"));
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"));
+        config.setMaxAge(3600L); // How long the pre-flight request can be cached
+
+        source.registerCorsConfiguration("/**", config);
+        return new CorsFilter(source);
+    }
+
+    @Bean
+    public CommandLineRunner initData(UserRepository userRepository, RoleRepository roleRepository, PasswordEncoder passwordEncoder) {
+        return args -> {
+            if (roleRepository.findByName(Role.RoleName.ROLE_USER).isEmpty()) {
+                roleRepository.save(new Role(null, Role.RoleName.ROLE_USER));
+            }
+            if (roleRepository.findByName(Role.RoleName.ROLE_ADMIN).isEmpty()) {
+                roleRepository.save(new Role(null, Role.RoleName.ROLE_ADMIN));
+            }
+
+            if (userRepository.findByEmail("admin@elibrary.com").isEmpty()) {
+                Role adminRole = roleRepository.findByName(Role.RoleName.ROLE_ADMIN)
+                        .orElseThrow(() -> new RuntimeException("Admin Role not found."));
+                Set<Role> adminRoles = new HashSet<>();
+                adminRoles.add(adminRole);
+
+                User adminUser = new User();
+                adminUser.setEmail("admin@elibrary.com");
+                adminUser.setPassword(passwordEncoder.encode("adminpass"));
+                adminUser.setName("Admin User");
+                adminUser.setRegistrationDate(LocalDateTime.now());
+                adminUser.setAccountNonLocked(true); // Default to non-locked
+                adminUser.setRoles(adminRoles);
+                userRepository.save(adminUser);
+                System.out.println("Default Admin user created: admin@elibrary.com / adminpass");
+            }
+        };
+    }
+}

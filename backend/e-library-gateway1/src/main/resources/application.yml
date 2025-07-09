@@ -1,0 +1,97 @@
+# application.yml for e-library-gateway
+
+server.port: 8080
+spring.application.name: e-library-gateway
+
+eureka.client.service-url.defaultZone: http://localhost:8761/eureka/
+eureka.instance.prefer-ip-address: true
+
+spring.cloud.gateway.routes:
+  # Auth Service API Route
+  - id: auth-service
+    uri: lb://AUTH-SERVICE
+    predicates:
+      - Path=/api/auth/**,/api/users/**
+
+  # Book Service API Route
+  - id: book-service
+    uri: lb://BOOK-SERVICE
+    predicates:
+      - Path=/api/books/**
+
+  # Book Service Files Route
+  - id: book-service-files
+    uri: lb://BOOK-SERVICE
+    predicates:
+      - Path=/books/**
+
+  # Borrowing Service API Route
+  - id: borrowing-service
+    uri: lb://BORROWING-SERVICE
+    predicates:
+      - Path=/api/borrows/**
+
+  # --- Swagger UI and API Docs Routes for each Microservice ---
+  # These routes are essential for the Gateway to properly proxy Swagger UI assets.
+
+  # Auth Service Swagger UI & API Docs
+  - id: auth-service-swagger-ui
+    uri: lb://AUTH-SERVICE
+    predicates:
+      - Path=/api/auth/swagger-ui/**
+      - Path=/api/auth/v3/api-docs/**
+    filters:
+      - RewritePath=/api/auth/(?<segment>.*), /${segment}
+
+  # Book Service Swagger UI & API Docs
+  - id: book-service-swagger-ui
+    uri: lb://BOOK-SERVICE
+    predicates:
+      - Path=/api/books/swagger-ui/**
+      - Path=/api/books/v3/api-docs/**
+    filters:
+      - RewritePath=/api/books/(?<segment>.*), /${segment}
+
+  # Borrowing Service Swagger UI & API Docs
+  - id: borrowing-service-swagger-ui
+    uri: lb://BORROWING-SERVICE
+    predicates:
+      - Path=/api/borrows/swagger-ui/**
+      - Path=/api/borrows/v3/api-docs/**
+    filters:
+      - RewritePath=/api/borrows/(?<segment>.*), /${segment}
+
+# JWT Secret (MUST MATCH Auth Service's jwt.secret)
+jwt.secret: ThisIsAReallyStrongSecretKeyForYourJWTAuthenticationWhichNeedsToBeAtLeast32BytesLong
+
+spring.cloud.gateway.globalcors.corsConfigurations:
+  "/api/**":
+    allowedOrigins: http://localhost:3000
+    allowedMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    allowedHeaders: "*"
+    allowCredentials: true
+
+logging.level.org.springframework.security: DEBUG
+logging.level.org.springframework.web: DEBUG
+logging.level.org.springframework.cloud.gateway: DEBUG
+
+# --- Springdoc Configuration for Gateway's Centralized Swagger UI ---
+# This enables the http://localhost:8080/swagger-ui.html endpoint
+# and tells it where to find the API definitions for each service.
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: Auth Service
+        url: /api/auth/v3/api-docs
+      - name: Book Service
+        url: /api/books/v3/api-docs
+      - name: Borrowing Service
+        url: /api/borrows/v3/api-docs
+  api-docs:
+    path: /v3/api-docs

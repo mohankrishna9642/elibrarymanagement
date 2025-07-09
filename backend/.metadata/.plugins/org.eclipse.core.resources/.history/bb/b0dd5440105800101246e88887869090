@@ -1,0 +1,13 @@
+package com.e_library.e_library_book_service;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class ELibraryBookServiceApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(ELibraryBookServiceApplication.class, args);
+	}
+
+}

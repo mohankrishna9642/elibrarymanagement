@@ -1,0 +1,204 @@
+package com.elibrary.gateway.config;
+
+import java.security.Key;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authentication.AuthenticationWebFilter;
+import org.springframework.security.web.server.context.NoOpServerSecurityContextRepository;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.util.pattern.PathPatternParser;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+import reactor.core.publisher.Mono;
+
+@Configuration
+@EnableWebFluxSecurity
+public class GatewayConfig {
+
+    private static final Logger logger = LoggerFactory.getLogger(GatewayConfig.class);
+
+    @Value("${jwt.secret}")
+    private String jwtSecret;
+
+    // PathPatternParser bean. It's used by ServerWebExchangeMatchers.pathMatchers internally.
+    @Bean
+    public PathPatternParser pathPatternParser() {
+        PathPatternParser parser = new PathPatternParser();
+        parser.setCaseSensitive(false);
+        parser.setMatchOptionalTrailingSeparator(true);
+        return parser;
+    }
+
+    // Array of general public paths.
+    // Borrowing Service Swagger paths are now handled by a separate, higher-priority chain.
+    private static final String[] GENERAL_PUBLIC_PATHS_ARRAY = {
+        "/",
+        "/api/auth/login",
+        "/api/auth/register",
+        "/actuator/**",
+        "/swagger-ui.html", // Gateway's own Swagger UI
+        "/swagger-ui/**",
+        "/v3/api-docs/**",
+        "/api/auth/swagger-ui.html", // Auth Service Swagger
+        "/api/auth/swagger-ui/**",
+        "/api/auth/v3/api-docs/**",
+        "/api/books/browse",
+        "/books/**", // This path is routed to Book Service, it still needs to be permitAll on Gateway level
+        "/api/books/swagger-ui.html",
+        "/api/books/swagger-ui/**",
+        "/api/books/v3/api-docs/**"
+    };
+
+    // Dedicated, very high precedence filter chain just for Borrowing Service Swagger
+    // This is to ensure these specific paths are permitted first, bypassing potential conflicts.
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE - 2)
+    public static SecurityWebFilterChain borrowingServiceSwaggerFilterChain(ServerHttpSecurity http) {
+        http
+            .securityMatcher(ServerWebExchangeMatchers.pathMatchers(
+                "/api/borrows/swagger-ui.html",
+                "/api/borrows/swagger-ui/**",
+                "/api/borrows/v3/api-docs/**",
+                "/api/borrows/public-status" // Also include the public-status endpoint here
+            ))
+            .authorizeExchange(exchanges -> exchanges.anyExchange().permitAll()) // Absolutely permit these paths
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .build(); // Correctly build and return
+        return http;
+    }
+
+    // General public filter chain, runs after borrowingServiceSwaggerFilterChain
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE - 1)
+    public static SecurityWebFilterChain generalPublicSecurityFilterChain(ServerHttpSecurity http) {
+        http
+            .securityMatcher(ServerWebExchangeMatchers.pathMatchers(GENERAL_PUBLIC_PATHS_ARRAY))
+            .authorizeExchange(exchanges -> exchanges.anyExchange().permitAll())
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .build(); // Correctly build and return
+        return http;
+    }
+
+
+    // Main security filter chain for authenticated requests
+    @Bean
+    public static SecurityWebFilterChain springSecurityFilterChain(
+        ServerHttpSecurity http,
+        @Qualifier("jwtAuthenticationFilter") WebFilter authenticationWebFilter
+    ) {
+        http
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .httpBasic(Customizer.withDefaults())
+            .formLogin(formLoginSpec -> formLoginSpec.disable())
+            .logout(logoutSpec -> logoutSpec.disable())
+
+            .authorizeExchange(exchanges -> exchanges
+                .anyExchange().authenticated()
+            )
+            .securityContextRepository(NoOpServerSecurityContextRepository.getInstance());
+
+        http.addFilterAt(authenticationWebFilter, SecurityWebFiltersOrder.AUTHENTICATION);
+
+        return http.build(); // Correctly build and return
+    }
+
+    // ReactiveAuthenticationManager validates JWTs
+    @Bean
+    public ReactiveAuthenticationManager reactiveAuthenticationManager() {
+        return authentication -> {
+            String token = (String) authentication.getCredentials();
+            try {
+                Claims claims = Jwts.parser()
+                        .setSigningKey(key())
+                        .build()
+                        .parseClaimsJws(token)
+                        .getBody();
+
+                String username = claims.getSubject();
+                List<String> roles = claims.get("roles", List.class);
+
+                List<SimpleGrantedAuthority> authorities = roles.stream()
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList());
+
+                return Mono.just(new UsernamePasswordAuthenticationToken(username, token, authorities));
+            } catch (Exception e) {
+                // This logger catches invalid/expired tokens for protected paths.
+                // For permitAll paths, this should ideally not be reached if matching is correct.
+                logger.error("Gateway: JWT validation failed in ReactiveAuthenticationManager: {}", e.getMessage());
+                return Mono.empty(); // Authentication failed
+            }
+        };
+    }
+
+    // Helper to get JWT signing key
+    private Key key() {
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+    }
+
+    // AuthenticationWebFilter extracts JWT from Authorization header
+    @Bean
+    public AuthenticationWebFilter jwtAuthenticationFilter() {
+        AuthenticationWebFilter filter = new AuthenticationWebFilter(reactiveAuthenticationManager());
+
+        filter.setServerAuthenticationConverter(exchange -> {
+            String header = exchange.getRequest().getHeaders().getFirst("Authorization");
+            if (header != null && header.startsWith("Bearer ")) {
+                String authToken = header.substring(7);
+                return Mono.just(new UsernamePasswordAuthenticationToken(authToken, authToken));
+            }
+            return Mono.empty();
+        });
+
+        // The custom AuthenticationSuccessHandler (for adding X-headers) is handled by JwtHeaderForwarderFilter (GlobalFilter).
+        // This filter will simply pass control.
+        return filter;
+    }
+
+    // UserDetailsService for internal Gateway users (e.g., /actuator)
+    @Bean
+    public ReactiveUserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
+        return username -> {
+            if ("gatewayuser".equals(username)) {
+                UserDetails user = User.withUsername("gatewayuser")
+                        .password(passwordEncoder.encode("gatewaypass"))
+                        .roles("GATEWAY_ADMIN")
+                        .build();
+                return Mono.just(user);
+            }
+            return Mono.empty();
+        };
+    }
+
+    // PasswordEncoder for hashing passwords
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}

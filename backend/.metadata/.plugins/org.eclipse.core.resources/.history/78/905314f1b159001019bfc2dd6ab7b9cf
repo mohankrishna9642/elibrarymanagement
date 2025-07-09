@@ -1,0 +1,15 @@
+package com.elibrary.borrowingservice.feign;
+
+import com.elibrary.borrowingservice.dto.UserDto;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+
+@FeignClient(name = "auth-service") // Name of the Auth Service in Eureka
+public interface AuthClient {
+
+    // Ensure this endpoint path exactly matches the Auth Service's UserController
+    // It is expected to receive a Long ID and return a UserDto
+    @GetMapping("/api/users/profile-by-id/{id}") 
+    UserDto getUserProfileById(@PathVariable("id") Long id);
+}

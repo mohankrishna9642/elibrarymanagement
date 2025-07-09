@@ -1,0 +1,225 @@
+package com.elibrary.borrowingservice.service;
+
+import com.elibrary.borrowingservice.entity.Borrow;
+import com.elibrary.borrowingservice.entity.Borrow.BorrowStatus;
+import com.elibrary.borrowingservice.exception.ResourceNotFoundException;
+import com.elibrary.borrowingservice.exception.BadRequestException; // For custom exceptions
+import com.elibrary.borrowingservice.repository.BorrowRepository;
+import com.elibrary.borrowingservice.feign.BookClient; // Feign client for Book Service
+import com.elibrary.borrowingservice.feign.AuthClient; // Feign client for Auth Service
+import com.elibrary.borrowingservice.dto.BookDto;
+import com.elibrary.borrowingservice.dto.UserDto;
+import com.elibrary.borrowingservice.dto.BorrowRequest;
+import com.elibrary.borrowingservice.dto.BorrowResponse;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.context.SecurityContextHolder; // To get authenticated user ID/email
+import org.springframework.security.core.userdetails.UserDetails; // To cast principal if needed
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken; // To cast authentication details
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@Service
+public class BorrowService {
+
+    private static final Logger logger = LoggerFactory.getLogger(BorrowService.class);
+
+    private final BorrowRepository borrowRepository;
+    private final BookClient bookClient; // Injected Feign client
+    private final AuthClient authClient; // Injected Feign client
+
+    public BorrowService(BorrowRepository borrowRepository, BookClient bookClient, AuthClient authClient) {
+        this.borrowRepository = borrowRepository;
+        this.bookClient = bookClient;
+        this.authClient = authClient;
+    }
+
+    // Helper to get authenticated user ID from SecurityContext
+    private Long getAuthenticatedUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new BadRequestException("User not authenticated.");
+        }
+        // Assuming X-User-ID is set as details, or principal is UserDetails with getId()
+        if (authentication.getDetails() instanceof String) { // If X-User-ID was set as String detail
+            return Long.valueOf((String) authentication.getDetails());
+        }
+        // Fallback if principal is UserDetails (from Auth Service, if directly passed)
+        if (authentication.getPrincipal() instanceof UserDetails) {
+            // This requires UserDetails to have a getId() method, or use username to fetch user by ID
+            // For simplicity, we strictly rely on X-User-ID header passing.
+            logger.warn("Principal is UserDetails, not raw user ID. Relying on X-User-ID header forwarding. If this is missing, authentication might fail.");
+            // In a real app, you might fetch user by username if ID isn't in details
+            throw new BadRequestException("User ID not found in authentication details. Ensure Gateway forwards X-User-ID.");
+        }
+        throw new BadRequestException("Could not retrieve authenticated user ID.");
+    }
+
+    // New: Helper to get authenticated user email
+    private String getAuthenticatedUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new BadRequestException("User not authenticated.");
+        }
+        return authentication.getName(); // Returns username (email)
+    }
+
+
+    @Transactional
+    public BorrowResponse borrowBook(BorrowRequest borrowRequest) {
+        Long userId = getAuthenticatedUserId();
+        Long bookId = borrowRequest.getBookId();
+        logger.debug("BorrowService: User {} attempting to borrow book {}", userId, bookId);
+
+        // Rule 1: User can only borrow one copy of a specific book at a time
+        Optional<Borrow> existingBorrow = borrowRepository.findByUserIdAndBookIdAndStatus(userId, bookId, BorrowStatus.BORROWED);
+        if (existingBorrow.isPresent()) {
+            logger.warn("BorrowService: User {} already has an active borrow for book {}", userId, bookId);
+            throw new BadRequestException("You have already borrowed this book and have not returned it yet.");
+        }
+
+        // Rule 2: Check if user has already borrowed a book and not returned it
+        List<Borrow> activeBorrows = borrowRepository.findByUserIdAndStatus(userId, BorrowStatus.BORROWED);
+        if (!activeBorrows.isEmpty()) {
+            logger.warn("BorrowService: User {} already has an active borrow for another book.", userId);
+            throw new BadRequestException("You must return your currently borrowed book before borrowing another one.");
+        }
+
+        // Step 1: Check book availability and decrement copies in Book Service
+        Integer availableCopies = bookClient.getAvailableCopiesCount(bookId);
+        logger.debug("BorrowService: Book {} available copies: {}", bookId, availableCopies);
+
+        if (availableCopies == null || availableCopies <= 0) {
+            logger.warn("BorrowService: Book {} is not available for borrowing.", bookId);
+            throw new BadRequestException("Book is not currently available.");
+        }
+
+        bookClient.decrementCopies(bookId); // Call Book Service to decrement
+        logger.debug("BorrowService: Decremented copies for book {}", bookId);
+
+        // Step 2: Create a new borrow record
+        Instant now = Instant.now();
+        Instant dueDate = now.plus(14, ChronoUnit.DAYS); // Example: 14 days due period
+
+        Borrow borrow = new Borrow();
+        borrow.setUserId(userId);
+        borrow.setBookId(bookId);
+        borrow.setBorrowDate(now);
+        borrow.setDueDate(dueDate);
+        borrow.setStatus(BorrowStatus.BORROWED);
+
+        Borrow savedBorrow = borrowRepository.save(borrow);
+        logger.info("BorrowService: Book {} borrowed by user {} successfully. Borrow ID: {}", bookId, userId, savedBorrow.getId());
+
+        return convertToBorrowResponse(savedBorrow);
+    }
+
+    @Transactional
+    public BorrowResponse returnBook(Long borrowId) {
+        Long userId = getAuthenticatedUserId();
+        logger.debug("BorrowService: User {} attempting to return borrow ID {}", userId, borrowId);
+
+        Borrow borrow = borrowRepository.findById(borrowId)
+                .orElseThrow(() -> {
+                    logger.error("BorrowService: Borrow record not found with ID: {}", borrowId);
+                    return new ResourceNotFoundException("Borrow record not found with ID: " + borrowId);
+                });
+
+        if (!borrow.getUserId().equals(userId)) {
+            logger.warn("BorrowService: User {} attempted to return book from another user (Borrow ID: {}).", userId, borrowId);
+            throw new BadRequestException("You are not authorized to return this book.");
+        }
+
+        if (borrow.getStatus() != BorrowStatus.BORROWED && borrow.getStatus() != BorrowStatus.OVERDUE) {
+            logger.warn("BorrowService: Borrow ID {} is already in status {}", borrowId, borrow.getStatus());
+            throw new BadRequestException("This book has already been returned or is not currently borrowed.");
+        }
+
+        // Step 1: Increment copies in Book Service
+        bookClient.incrementCopies(borrow.getBookId());
+        logger.debug("BorrowService: Incremented copies for book {}", borrow.getBookId());
+
+        // Step 2: Update borrow record
+        borrow.setReturnDate(Instant.now());
+        borrow.setStatus(BorrowStatus.RETURNED);
+
+        Borrow updatedBorrow = borrowRepository.save(borrow);
+        logger.info("BorrowService: Book {} returned by user {} successfully. Borrow ID: {}", borrow.getBookId(), userId, updatedBorrow.getId());
+
+        return convertToBorrowResponse(updatedBorrow);
+    }
+
+    // User-specific borrowing history
+    public List<BorrowResponse> getUserBorrows() {
+        Long userId = getAuthenticatedUserId();
+        logger.debug("BorrowService: Fetching all borrow records for user {}", userId);
+        List<Borrow> borrows = borrowRepository.findByUserId(userId);
+        return borrows.stream()
+                .map(this::convertToBorrowResponse)
+                .collect(Collectors.toList());
+    }
+
+    // ADMIN ONLY: Get all borrowing records
+    @Transactional(readOnly = true)
+    public List<BorrowResponse> getAllBorrowsForAdmin() {
+        logger.debug("BorrowService: Fetching all borrow records for admin view.");
+        return borrowRepository.findAll().stream()
+                .map(this::convertToBorrowResponse)
+                .collect(Collectors.toList());
+    }
+
+    // Helper method to convert Borrow entity to BorrowResponse DTO
+    private BorrowResponse convertToBorrowResponse(Borrow borrow) {
+        BorrowResponse response = new BorrowResponse();
+        response.setId(borrow.getId());
+        response.setUserId(borrow.getUserId());
+        response.setBookId(borrow.getBookId());
+        response.setBorrowDate(borrow.getBorrowDate());
+        response.setReturnDate(borrow.getReturnDate());
+        response.setDueDate(borrow.getDueDate());
+        response.setStatus(borrow.getStatus());
+
+        // Populate book details via Feign client call (if bookId is not null)
+        if (borrow.getBookId() != null) {
+            try {
+                BookDto bookDto = bookClient.getBookById(borrow.getBookId());
+                if (bookDto != null) {
+                    response.setBookTitle(bookDto.getTitle());
+                    response.setBookAuthor(bookDto.getAuthor());
+                } else {
+                    logger.warn("BorrowService: Book details not found for bookId: {}", borrow.getBookId());
+                }
+            } catch (Exception e) {
+                logger.error("BorrowService: Error fetching book details for bookId {}: {}", borrow.getBookId(), e.getMessage());
+                response.setBookTitle("[Unavailable]"); // Indicate error in UI
+                response.setBookAuthor("[Unavailable]");
+            }
+        }
+
+        // Populate user details via Feign client call (if userId is not null)
+        if (borrow.getUserId() != null) {
+            try {
+                UserDto userDto = authClient.getUserProfileById(borrow.getUserId());
+                if (userDto != null) {
+                    response.setUserEmail(userDto.getEmail());
+                    response.setUserName(userDto.getName());
+                } else {
+                    logger.warn("BorrowService: User details not found for userId: {}", borrow.getUserId());
+                }
+            } catch (Exception e) {
+                logger.error("BorrowService: Error fetching user details for userId {}: {}", borrow.getUserId(), e.getMessage());
+                response.setUserEmail("[Unavailable]"); // Indicate error in UI
+                response.setUserName("[Unavailable]");
+            }
+        }
+        return response;
+    }
+}

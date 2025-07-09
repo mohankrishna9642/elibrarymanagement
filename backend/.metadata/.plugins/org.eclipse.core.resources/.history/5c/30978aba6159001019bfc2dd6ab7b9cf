@@ -1,0 +1,13 @@
+package com.elibrary.borrowingservice;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class ELibraryBorrowingServiceApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(ELibraryBorrowingServiceApplication.class, args);
+	}
+
+}

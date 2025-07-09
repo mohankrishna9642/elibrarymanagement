@@ -1,0 +1,28 @@
+package com.elibrary.borrowingservice.feign;
+
+import java.util.List;
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@FeignClient(name = "auth-service", url = "http://auth-service", configuration = FeignClientInterceptor.class)
+public interface AuthClient {
+
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
+    class UserProfileDto {
+        private Long id;
+        private String email;
+        private String name;
+        private List<String> roles; // Include roles if you need them
+    }
+
+    @GetMapping("/api/users/profile-by-id/{userId}")
+    UserProfileDto getUserProfileById(@PathVariable("userId") Long userId);
+}

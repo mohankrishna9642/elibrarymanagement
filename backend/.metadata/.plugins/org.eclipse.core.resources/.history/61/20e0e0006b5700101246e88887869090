@@ -1,0 +1,5 @@
+package com.elibrary.authservice.security.services;
+
+public class UserDetailsImpl {
+
+}
