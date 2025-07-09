@@ -1,5 +1,0 @@
-package com.elibrary.borrowingservice.dto;
-
-public class Borrowresponse {
-
-}

@@ -1,5 +1,0 @@
-package com.elibrary.borrowingservice.exception;
-
-public class Resourcenotfound {
-
-}

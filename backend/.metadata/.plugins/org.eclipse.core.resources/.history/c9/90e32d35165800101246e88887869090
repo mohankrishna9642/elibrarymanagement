@@ -1,5 +1,0 @@
-package com.elibrary.bookservice.repository;
-
-public interface Bookrepository {
-
-}

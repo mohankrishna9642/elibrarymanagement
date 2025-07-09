@@ -1,5 +1,0 @@
-package com.elibrary.borrowingservice.entity;
-
-public class Borrow {
-
-}

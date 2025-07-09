@@ -1,0 +1,17 @@
+# === Spring Boot (backend) ===
+backend/target/
+backend/.metadata/
+backend/.idea/
+backend/.classpath
+backend/.project
+
+# === React (frontend) ===
+frontend/node_modules/
+frontend/build/
+frontend/.idea/
+frontend/.vscode/
+
+# === System Files ===
+.DS_Store
+Thumbs.db
+*.log

@@ -1,5 +1,0 @@
-package com.elibrary.authservice.security.jwt;
-
-public class AuthEntryPointJwt {
-
-}

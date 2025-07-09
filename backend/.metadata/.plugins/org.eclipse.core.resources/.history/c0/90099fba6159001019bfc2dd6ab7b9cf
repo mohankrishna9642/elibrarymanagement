@@ -1,5 +1,0 @@
-package com.elibrary.borrowingservice.controller;
-
-public class BorrowController {
-
-}

@@ -1,5 +1,0 @@
-package com.elibrary.authservice.entity;
-
-public class Role {
-
-}
