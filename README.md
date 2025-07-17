@@ -203,6 +203,8 @@ Default Credentials
 For initial testing, you can use the following admin credentials:
 
 Future Enhancements
+
+
 JWT Refresh Tokens: Implement a refresh token mechanism for longer user sessions without frequent re-login.
 
 Centralized Logging & Monitoring: Integrate ELK stack (Elasticsearch, Logstash, Kibana) or Prometheus/Grafana for comprehensive logging and monitoring.
